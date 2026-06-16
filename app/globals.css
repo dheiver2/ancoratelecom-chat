@@ -2744,10 +2744,14 @@ body {
 }
 
 .footer-brand img {
-  height: 56px;
+  height: 46px;
   width: auto;
   object-fit: contain;
   margin-bottom: 6px;
+  background: #fff;
+  padding: 8px 16px;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
 .footer-tagline {
