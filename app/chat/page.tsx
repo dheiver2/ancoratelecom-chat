@@ -18,12 +18,15 @@ interface Message {
   sources?: Source[];
   /** Imagem anexada (data URI) — só na sessão; não é persistida. */
   image?: string;
+  /** Avaliação do usuário sobre a resposta da Ana. */
+  feedback?: "up" | "down";
 }
 interface Conversation {
   id: string;
   title: string;
   messages: Message[];
   model?: string; // modelo específico desta conversa
+  agent?: string; // agente especializado desta conversa
 }
 
 // Sugestões de ações do dia a dia — variam conforme o agente selecionado.
@@ -60,6 +63,24 @@ const SUGGESTIONS_BY_AGENT: Record<string, string[]> = {
   ],
 };
 const suggestionsForAgent = (id: string) => SUGGESTIONS_BY_AGENT[id] || SUGGESTIONS_BY_AGENT.geral;
+
+// Quick-replies: a Ana pode terminar com um bloco ```ana-quick [".."] que vira botões.
+function quickOptions(content: string): string[] {
+  const m = content.match(/```ana-quick\s*([\s\S]*?)```/);
+  if (!m) return [];
+  try {
+    const arr = JSON.parse(m[1].trim());
+    if (Array.isArray(arr)) return arr.filter((x) => typeof x === "string" && x.trim()).slice(0, 4);
+  } catch { /* bloco inválido — ignora */ }
+  return [];
+}
+const stripQuick = (content: string) => content.replace(/```ana-quick\s*[\s\S]*?```/g, "").trim();
+
+// Atendimento humano (WhatsApp comercial da Âncora) e link de teste de velocidade.
+const WHATSAPP_HUMANO = "558232637542";
+const SPEEDTEST_URL = "https://fast.com";
+// Aviso de status da rede. Vazio = sem banner. Preencha quando houver instabilidade.
+const NETWORK_NOTICE = "";
 
 // Agentes especializados — o id é enviado ao /api/chat e foca o atendimento.
 const AGENTS: { id: string; name: string; desc: string; icon: JSX.Element }[] = [
@@ -535,6 +556,13 @@ export default function ChatPage() {
   useEffect(() => {
     localStorage.setItem("ancora-agent", agentId);
   }, [agentId]);
+
+  // Ao trocar de conversa, restaura o agente salvo nela (se houver).
+  useEffect(() => {
+    const conv = conversations.find((c) => c.id === currentId);
+    if (conv?.agent && AGENTS.some((a) => a.id === conv.agent)) setAgentId(conv.agent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
   // Detecta suporte a ditado por voz (Web Speech API) e limpa ao desmontar.
   useEffect(() => {
@@ -1026,6 +1054,7 @@ export default function ChatPage() {
       ...c,
       title: isFirst ? (rawContent || attachedFile?.name || (attachedImage ? "Imagem" : "Arquivo")).slice(0, 40) : c.title,
       messages: [...c.messages, userMsg],
+      agent: agentId,
     }));
     setInput("");
     setAttachedFile(null);
@@ -1052,6 +1081,50 @@ export default function ChatPage() {
     updateCurrent((c) => ({ ...c, messages: history }));
     runCompletion(history);
   }
+
+  // ── Ler resposta em voz alta (TTS) ──────────────────────────────────
+  const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
+  function speak(index: number, text: string) {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (speakingIndex === index) { window.speechSynthesis.cancel(); setSpeakingIndex(null); return; }
+    window.speechSynthesis.cancel();
+    // Remove markdown básico para leitura mais natural.
+    const clean = text.replace(/```[\s\S]*?```/g, ". ").replace(/[*_#>`]/g, "").slice(0, 4000);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = "pt-BR";
+    u.onend = () => setSpeakingIndex(null);
+    u.onerror = () => setSpeakingIndex(null);
+    setSpeakingIndex(index);
+    window.speechSynthesis.speak(u);
+  }
+
+  // ── Feedback 👍/👎 numa resposta ────────────────────────────────────
+  function setFeedback(index: number, value: "up" | "down") {
+    updateCurrent((c) => ({
+      ...c,
+      messages: c.messages.map((m, i) =>
+        i === index ? { ...m, feedback: m.feedback === value ? undefined : value } : m
+      ),
+    }));
+  }
+
+  // ── Falar com atendente humano (WhatsApp com resumo da conversa) ─────
+  function handoffWhatsapp() {
+    const ultimas = messages.slice(-6).map((m) =>
+      `${m.role === "user" ? "Cliente" : "Ana"}: ${m.content.replace(/```[\s\S]*?```/g, "[anexo]").slice(0, 300)}`
+    ).join("\n");
+    const texto = `Olá! Falei com a assistente Ana e gostaria de continuar com um atendente.\n\nResumo da conversa:\n${ultimas}`;
+    window.open(`https://wa.me/${WHATSAPP_HUMANO}?text=${encodeURIComponent(texto.slice(0, 1500))}`, "_blank");
+  }
+
+  // ── Teste de velocidade: abre o medidor e orienta a Ana ──────────────
+  function abrirTesteVelocidade() {
+    window.open(SPEEDTEST_URL, "_blank");
+    send("Acabei de medir minha velocidade. Vou te passar o resultado — me ajude a interpretar se está dentro do meu plano.");
+  }
+
+  // ── Banner de status da rede (dispensável) ──────────────────────────
+  const [netNoticeOpen, setNetNoticeOpen] = useState(true);
 
   function startEdit(index: number, content: string) {
     setEditingIndex(index);
@@ -1404,7 +1477,7 @@ export default function ChatPage() {
           key={a.id}
           type="button"
           className={`agent-pill${agentId === a.id ? " active" : ""}`}
-          onClick={() => setAgentId(a.id)}
+          onClick={() => { setAgentId(a.id); updateCurrent((c) => ({ ...c, agent: a.id })); }}
           title={a.desc}
           aria-pressed={agentId === a.id}
         >
@@ -1786,6 +1859,14 @@ export default function ChatPage() {
           </div>
         )}
 
+        {NETWORK_NOTICE && netNoticeOpen && (
+          <div className="net-notice" role="status">
+            <span className="net-notice-dot" />
+            <span>{NETWORK_NOTICE}</span>
+            <button onClick={() => setNetNoticeOpen(false)} aria-label="Fechar aviso">×</button>
+          </div>
+        )}
+
         {messages.length === 0 ? (
           <div className="greeting">
             <img src="/logo-ancora.png" alt="Âncora Telecom" />
@@ -1877,10 +1958,17 @@ export default function ChatPage() {
                           </span>
                         ) : (
                           <>
-                            <MessageContent content={m.content} sources={m.sources} />
+                            <MessageContent content={stripQuick(m.content)} sources={m.sources} />
                             {m.sources && m.sources.length > 0 && <Sources sources={m.sources} />}
                             {loading && i === messages.length - 1 && (
                               <span className="stream-caret" aria-hidden="true" />
+                            )}
+                            {!loading && i === messages.length - 1 && quickOptions(m.content).length > 0 && (
+                              <div className="quick-replies">
+                                {quickOptions(m.content).map((o) => (
+                                  <button key={o} onClick={() => send(o)}>{o}</button>
+                                ))}
+                              </div>
                             )}
                             {!loading && (
                               <div className="msg-actions">
@@ -1906,6 +1994,17 @@ export default function ChatPage() {
                                     </>
                                   )}
                                 </button>
+                                <button
+                                  className={`msg-action${speakingIndex === i ? " active" : ""}`}
+                                  onClick={() => speak(i, m.content)}
+                                  aria-label={speakingIndex === i ? "Parar leitura" : "Ouvir resposta"}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                    <path d="M11 5L6 9H3v6h3l5 4V5z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                                    <path d="M16 9a3 3 0 010 6M18.5 7a6 6 0 010 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                  </svg>
+                                  {speakingIndex === i ? "Parar" : "Ouvir"}
+                                </button>
                                 {i === messages.length - 1 && (
                                   <button className="msg-action" onClick={regenerate} aria-label="Regenerar resposta">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -1915,6 +2014,42 @@ export default function ChatPage() {
                                     Regenerar
                                   </button>
                                 )}
+                                <span className="msg-feedback">
+                                  <button
+                                    className={`msg-action icon${m.feedback === "up" ? " up" : ""}`}
+                                    onClick={() => setFeedback(i, "up")}
+                                    aria-label="Resposta útil"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                      <path d="M7 11v9H4a1 1 0 01-1-1v-7a1 1 0 011-1h3zm0 0l5-8a2 2 0 012 2v3h4.5a2 2 0 011.95 2.45l-1.4 6A2 2 0 0117.1 20H7" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    className={`msg-action icon${m.feedback === "down" ? " down" : ""}`}
+                                    onClick={() => setFeedback(i, "down")}
+                                    aria-label="Resposta não ajudou"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                      <path d="M17 13V4h3a1 1 0 011 1v7a1 1 0 01-1 1h-3zm0 0l-5 8a2 2 0 01-2-2v-3H5.5a2 2 0 01-1.95-2.45l1.4-6A2 2 0 016.9 4H17" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                </span>
+                              </div>
+                            )}
+                            {!loading && i === messages.length - 1 && (
+                              <div className="smart-actions">
+                                <button onClick={handoffWhatsapp}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0012.04 2zm4.52 11.97c-.21.58-1.2 1.11-1.68 1.18-.43.06-.97.09-1.56-.1-.36-.11-.82-.26-1.41-.52-2.49-1.07-4.12-3.57-4.24-3.74-.12-.16-1.01-1.34-1.01-2.56 0-1.22.63-1.82.86-2.07.23-.25.5-.31.66-.31.16 0 .34 0 .48.01.15.01.36-.05.56.43.2.5.7 1.72.76 1.84.06.12.1.26.02.43-.34.74-.7.71-.36.96-.16.27.33 1.06 1.07 1.74.94.84 1.74 1.11 1.99 1.23.25.13.4.11.54-.06.16-.18.62-.72.78-.97z"/></svg>
+                                  Falar com atendente
+                                </button>
+                                <button onClick={() => send("Gere um protocolo de atendimento com um número e um resumo do que tratamos nesta conversa, em formato de documento.")}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 3h8l4 4v14a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M14 3v4h4M8 13h8M8 16h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                                  Gerar protocolo
+                                </button>
+                                <button onClick={abrirTesteVelocidade}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="13" r="8" stroke="currentColor" strokeWidth="1.7"/><path d="M12 13l4-3M12 5V3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>
+                                  Testar velocidade
+                                </button>
                               </div>
                             )}
                           </>

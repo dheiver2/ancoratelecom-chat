@@ -26,7 +26,12 @@ const BASE_PROMPT =
   "de 1 a 3 perguntas objetivas para fechar a especificação ANTES de entregar. Se o pedido já " +
   "estiver claro, declare em 1–2 linhas a especificação que você assumiu e então produza a " +
   "resposta baseada estritamente nela. Não invente requisitos: a entrega deve refletir " +
-  "exatamente o que foi especificado.";
+  "exatamente o que foi especificado.\n\n" +
+  "OPÇÕES RÁPIDAS: quando fizer sentido o usuário escolher entre poucas alternativas " +
+  "(ex.: tipo de problema, próximo passo), termine a resposta com um único bloco de código " +
+  "na linguagem `ana-quick` contendo APENAS um array JSON de 2 a 4 textos curtos. Exemplo:\n" +
+  "```ana-quick\n[\"Sem conexão\", \"Internet lenta\", \"Wi-Fi fraco\"]\n```\n" +
+  "Use só quando ajudar a decidir; caso contrário, não inclua o bloco.";
 
 // Bloco de planilha — só injetado quando o pedido é sobre planilha (economiza tokens).
 const SHEET_BLOCK =

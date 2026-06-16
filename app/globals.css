@@ -1067,6 +1067,82 @@ body {
   background: var(--hover);
   color: var(--ancora-roxo);
 }
+.msg-action.active { color: var(--ancora-rosa); }
+.msg-action.icon { padding: 5px 7px; }
+.msg-action.icon.up { color: #0da35a; background: rgba(13,163,90,0.1); }
+.msg-action.icon.down { color: #d23b3b; background: rgba(210,59,59,0.1); }
+.msg-feedback { display: inline-flex; gap: 2px; margin-left: auto; }
+
+/* Botões de opção rápida (quick-replies da Ana) */
+.quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.quick-replies button {
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--ancora-rosa);
+  background: var(--ancora-branco);
+  border: 1px solid var(--ancora-rosa);
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.quick-replies button:hover { background: var(--ancora-rosa); color: #fff; }
+
+/* Ações rápidas após a última resposta */
+.smart-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--borda);
+}
+.smart-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--texto-suave);
+  background: var(--ancora-cinza-claro);
+  border: 1px solid var(--borda);
+  padding: 7px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.smart-actions button:hover { border-color: var(--ancora-roxo); color: var(--texto); }
+.smart-actions button svg { color: var(--ancora-roxo); flex-shrink: 0; }
+
+/* Banner de status da rede */
+.net-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 16px 0;
+  padding: 10px 14px;
+  background: var(--ativo);
+  border: 1px solid var(--ancora-roxo-claro);
+  border-radius: 12px;
+  font-size: 0.88rem;
+  color: var(--texto);
+}
+.net-notice-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #e6a700; flex-shrink: 0;
+}
+.net-notice button {
+  margin-left: auto;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 1.2rem; line-height: 1; color: var(--texto-suave);
+}
 
 /* stop button (composer, while streaming) */
 .send.stop {
