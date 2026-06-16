@@ -630,6 +630,12 @@ export default function Landing() {
             </a>
           </div>
           <p className="footer-copy">© 2026 Âncora Telecom. {ASSISTENTE_FULL} — assistente de IA da Âncora Telecom.</p>
+          <p className="footer-powered">
+            Powered by{" "}
+            <a href="https://www.mangaba.ia.br/" target="_blank" rel="noreferrer">
+              Mangaba.ai
+            </a>
+          </p>
         </div>
       </footer>
     </div>
