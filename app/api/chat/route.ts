@@ -113,6 +113,58 @@ type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 /** Estimativa leve de tokens (sem lib pesada no Edge): ~4 chars por token. */
 const estTokens = (s: string) => Math.ceil(s.length / 4);
 
+// ── Mangaba Gateway (provedor PRINCIPAL) ──────────────────────────────
+// Self-hosted, exposto via ngrok. Mantém o histórico da conversa do lado
+// dele via session_id — por isso só enviamos a ÚLTIMA mensagem do usuário,
+// não o array de mensagens inteiro. Se falhar/indisponível, retorna `null`
+// e o chamador cai para o provedor atual (Hugging Face) como FALLBACK.
+function gatewayUrl(): string {
+  return (process.env.MANGABA_GATEWAY_URL || "https://mangaba.ngrok.app").replace(/\/$/, "");
+}
+
+async function chatWithGateway(baseUrl: string, sessionId: string, message: string): Promise<string | null> {
+  const form = new FormData();
+  form.append("session_id", sessionId);
+  form.append("message", message);
+  try {
+    const res = await fetch(`${baseUrl}/chat`, {
+      method: "POST",
+      headers: { "ngrok-skip-browser-warning": "1" },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) {
+      await res.text().catch(() => "");
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    // ChatResponse esperado: { session_id, response, history_length }
+    return data && typeof data.response === "string" && data.response ? data.response : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Envolve um texto pronto no mesmo formato de streaming (texto puro) que o
+ *  frontend já espera de /api/chat, para o caminho do Gateway responder
+ *  de forma idêntica ao caminho de streaming do Hugging Face. */
+function textResponse(text: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
 export async function POST(req: Request) {
   const username = await readSessionEdge(req.headers.get("cookie"));
   if (!username) {
@@ -133,6 +185,7 @@ export async function POST(req: Request) {
   let searchQuery = "";
   let agent = "";
   let imageDataUrl = "";
+  let conversationId = "";
   try {
     const body = await req.json();
     messages = body.messages;
@@ -147,6 +200,9 @@ export async function POST(req: Request) {
     if (typeof body.image === "string" && body.image.startsWith("data:image/")) {
       imageDataUrl = body.image;
     }
+    // Id da conversa (client-side) — usado para compor o session_id do
+    // Mangaba Gateway, que mantém o histórico do lado dele.
+    if (typeof body.conversationId === "string") conversationId = body.conversationId.trim();
     if (!Array.isArray(messages)) throw new Error();
 
     // Validação básica
@@ -182,6 +238,27 @@ export async function POST(req: Request) {
   // ── System prompt por intenção (só blocos úteis) ────────────────────
   const recentUserText = [...messages].reverse().find((m) => m.role === "user")?.content || "";
   const systemPrompt = buildSystemPrompt(recentUserText, agent);
+
+  // ── Mangaba Gateway (PRINCIPAL) ──────────────────────────────────────
+  // Tentamos primeiro o gateway self-hosted. Ele não aceita system prompt,
+  // contexto de busca nem imagem — só a última mensagem do usuário (o
+  // histórico fica do lado dele via session_id). Por isso só o usamos
+  // quando nenhum desses recursos "avançados" está em jogo; caso contrário
+  // (visão, busca na web, ou geração de planilha/documento que exige um
+  // formato de saída estrito) seguimos direto para o fallback (Hugging
+  // Face), que sabe lidar com esses casos. Qualquer falha do gateway
+  // (indisponível, timeout, resposta inválida) também cai no fallback.
+  const needsStructuredOutput =
+    agent === "documentos" || SHEET_RE.test(recentUserText) || DOC_RE.test(recentUserText);
+  const canUseGateway =
+    Boolean(recentUserText) && !imageDataUrl && !searchResults.length && !needsStructuredOutput;
+  if (canUseGateway) {
+    const gwBaseUrl = gatewayUrl();
+    const sessionId = `${username}:${conversationId || "default"}`;
+    const gwText = await chatWithGateway(gwBaseUrl, sessionId, recentUserText);
+    if (gwText != null) return textResponse(gwText);
+    // gwText === null → gateway indisponível/erro: segue para o fallback abaixo.
+  }
 
   // ── Orçamento de contexto: corta histórico antigo (preservando a 1ª msg
   //    e as mais recentes) até caber no teto de chars. A busca, quando há,
