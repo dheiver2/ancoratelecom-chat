@@ -5,14 +5,24 @@
 // Usa o POOLER do Supabase (porta 6543 / PgBouncer) que é
 // projetado para alta concorrência serverless.
 // ============================================================
-import { Pool, QueryResultRow } from "pg";
+import type { QueryResultRow } from "pg";
+import { Pool, neonConfig } from "@neondatabase/serverless";
 
 // Singleton global — persiste entre requests na mesma instância warm.
 const g = globalThis as typeof globalThis & { _a1pool?: Pool };
 
 function getPool(): Pool {
   if (!g._a1pool) {
+    // Desde 10/11/2026 o banco é o Postgres próprio na PoC Golden, por WebSocket em db.mangaba.ia.br.
+    // Sem DB_WS_PROXY, o mesmo Pool fala com o Neon (que também aceita WebSocket).
+    if (process.env.DB_WS_PROXY) {
+      neonConfig.wsProxy = process.env.DB_WS_PROXY;
+      neonConfig.useSecureWebSocket = true;
+      neonConfig.pipelineTLS = false;
+      neonConfig.pipelineConnect = false;
+    }
     const url = (
+      process.env.DB_URL ||                 // PoC Golden
       process.env.POSTGRES_URL ||           // pooler (preferencial)
       process.env.POSTGRES_URL_NON_POOLING  // fallback direto
     )?.replace("sslmode=require", "sslmode=no-verify");
@@ -28,7 +38,7 @@ function getPool(): Pool {
       connectionTimeoutMillis: 5_000,
     });
 
-    g._a1pool.on("error", (err) => {
+    g._a1pool.on("error", (err: Error) => {
       console.error("Pool error:", err.message);
       // Força recriação no próximo request
       g._a1pool = undefined;
