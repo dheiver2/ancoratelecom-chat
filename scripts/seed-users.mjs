@@ -5,10 +5,11 @@
 // - NÃO altera contas já existentes (preserva quem já tem senha).
 // - Grava as credenciais geradas em ./seed-credentials.txt (NÃO versionado).
 //
-// Uso:  POSTGRES_URL="postgres://..."  bun scripts/seed-users.mjs
-//       (ou tenha as vars em .env.local — ex.: `vercel env pull .env.local`)
+// Uso (produção, banco na PoC Golden desde 10/11/2026):
+//   ~/Downloads/Projetos/golden-postgres/scripts/com-banco.sh ancora node scripts/seed-users.mjs
+// Postgres local: POSTGRES_URL="postgres://...@localhost/..." node scripts/seed-users.mjs
 // ============================================================
-import { Pool } from "pg";
+import { abrirPool } from "./_banco.mjs";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -54,14 +55,8 @@ function genPassword() {
   return crypto.randomBytes(8).toString("base64url");
 }
 
-const url = (process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING || "")
-  .replace("sslmode=require", "sslmode=no-verify");
-if (!url) {
-  console.error("POSTGRES_URL não definida. Rode: vercel env pull .env.local");
-  process.exit(1);
-}
-
-const pool = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false } });
+let pool;
+try { pool = abrirPool(); } catch (e) { console.error(e.message); process.exit(1); }
 
 const created = [];
 let skipped = 0;
